@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Croupier Hunter</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e272e; color: white; margin: 0; padding: 15px; }
+        .header { display: flex; justify-content: space-between; align-items: center; background: #2f3640; padding: 10px 20px; border-radius: 8px; margin-bottom: 15px; }
+        .stats { color: #fbc531; font-weight: bold; }
+        button { background: #4cd137; border: none; color: white; padding: 12px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 16px; }
+        button:hover { opacity: 0.8; }
+        button:disabled { background: #7f8fa6; cursor: not-allowed; }
+        .btn-danger { background: #e84118; }
+        .btn-info { background: #00a8ff; padding: 8px 15px; font-size: 14px; }
+        input { padding: 12px; border-radius: 6px; border: none; font-size: 16px; width: 200px; }
+        #board { background: radial-gradient(circle, #27ae60 0%, #1e8449 100%); padding: 20px; border-radius: 12px; border: 4px solid #145a32; text-align: center; position: relative; }
+        .highlight-turn { box-shadow: 0 0 20px 5px #fbc531; border-color: #fbc531 !important; }
+        .cards-container { display: flex; justify-content: center; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
+        .card { background: white; border-radius: 8px; width: 60px; height: 90px; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; cursor: pointer; user-select: none; box-shadow: 0 4px 8px rgba(0,0,0,0.3); transition: transform 0.1s; }
+        .card:active { transform: scale(0.95); }
+        .card.red { color: #e84118; }
+        .card.black { color: #2f3640; }
+        .card.selected { border: 4px solid #00a8ff; transform: translateY(-10px); }
+        .card.hidden { background: repeating-linear-gradient(45deg, #353b48, #353b48 10px, #2f3640 10px, #2f3640 20px); border: 2px solid white; color: transparent; }
+        #rulesModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: #2f3640; padding: 25px; border-radius: 10px; max-width: 500px; line-height: 1.6; color: white; text-align: left; }
+        .close-btn { background: #e84118; float: right; padding: 5px 10px; margin-top: -10px; margin-right: -10px; }
+        #msg-banner { font-size: 18px; color: #fbc531; min-height: 25px; margin: 15px 0; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>
+            <h2>Croupier Hunter</h2>
+            <div id="player-stats" style="display:none;">Fichas: <span class="stats" id="chips">100</span></div>
+        </div>
+        <button class="btn-info" onclick="toggleRules(true)">Ver Reglas</button>
+    </div>
+
+    <div id="login" style="text-align: center; margin-top: 10vh;">
+        <h3>Únete a la mesa</h3>
+        <input type="text" id="username" placeholder="Tu nombre">
+        <button onclick="join()">Entrar</button>
+    </div>
+
+    <div id="game" style="display:none;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <div>Bote: <span class="stats" id="pot">0</span> | Casa: <span class="stats" id="house">0</span></div>
+            <div>Ciega actual: <span class="stats" id="blind">5</span> | <span id="phase">ESPERANDO</span></div>
+        </div>
+        
+        <div id="board">
+            <h3 style="margin-top:0;">Cartas del Crupier</h3>
+            <div id="dealer-cards" class="cards-container"></div>
+            
+            <div id="msg-banner">Esperando jugadores...</div>
+            
+            <h3>Tus Cartas</h3>
+            <div id="my-cards" class="cards-container"></div>
+            
+            <div id="actions" style="margin-top: 25px; display: none;">
+                <button onclick="sendDiscard()" id="btn-discard">Cambiar Cartas (0)</button>
+                <button onclick="sendAction('PLANTARSE')">Me planto</button>
+                <button class="btn-danger" onclick="sendAction('FOLD')">Retirarme (Fold)</button>
+            </div>
+            <div id="start-btn" style="margin-top: 20px;">
+                <button onclick="startRound()" style="width: 100%; font-size: 18px; padding: 15px;">Empezar Ronda</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="rulesModal">
+        <div class="modal-content">
+            <button class="close-btn" onclick="toggleRules(false)">X</button>
+            <h2>Normas Rápidas</h2>
+            <ul>
+                <li><b>Objetivo:</b> Tener mejor mano de póker que el crupier.</li>
+                <li><b>El Crupier:</b> Solo compite si tiene As-Rey o superior. Si no, el bote se acumula y la ciega sube.</li>
+                <li><b>Descartes (Cuestan fichas):</b> Cambiar 1 carta cuesta 1 ficha. 2 cartas cuestan 3 fichas. 3 cartas cuestan 6 fichas. (Se pagan a la Casa).</li>
+                <li><b>Turnos:</b> Habla en orden. Si es tu turno (la mesa brilla), elige tus cartas a cambiar y pulsa el botón, o plántate/retírate.</li>
+                <li><b>Mesa Caliente:</b> Si el bote está acumulado, no pueden entrar nuevos jugadores hasta que alguien lo gane.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let selectedCards = [];
+
+        function join() {
+            if(!document.getElementById('username').value) return;
+            socket.emit('join', document.getElementById('username').value);
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('game').style.display = 'block';
+            document.getElementById('player-stats').style.display = 'block';
+        }
+
+        function startRound() { socket.emit('startRound'); }
+        function toggleRules(show) { document.getElementById('rulesModal').style.display = show ? 'flex' : 'none'; }
+
+        function renderCard(str, index, selectable = false) {
+            if(str === 'hidden') return '<div class="card hidden"></div>';
+            const suits = {'h': '♥', 'd': '♦', 'c': '♣', 's': '♠'};
+            const value = str.substring(0, 1);
+            const suit = str.substring(1, 2);
+            const colorClass = (suit === 'h' || suit === 'd') ? 'red' : 'black';
+            const onclick = selectable ? `onclick="toggleCard(${index}, this)"` : '';
+            return `<div class="card ${colorClass}" ${onclick}>${value}${suits[suit]}</div>`;
+        }
+
+        function toggleCard(index, element) {
+            let pos = selectedCards.indexOf(index);
+            if (pos > -1) {
+                selectedCards.splice(pos, 1);
+                element.classList.remove('selected');
+            } else if (selectedCards.length < 3) {
+                selectedCards.push(index);
+                element.classList.add('selected');
+            }
+            updateDiscardBtn();
+        }
+
+        function updateDiscardBtn() {
+            let cost = selectedCards.length === 1 ? 1 : selectedCards.length === 2 ? 3 : selectedCards.length === 3 ? 6 : 0;
+            let btn = document.getElementById('btn-discard');
+            btn.innerText = cost > 0 ? `Pagar ${cost} y Cambiar ${selectedCards.length}` : 'Selecciona cartas';
+            btn.disabled = cost === 0;
+        }
+
+        function sendDiscard() {
+            if (selectedCards.length > 0) {
+                socket.emit('action', { type: 'DESCARTE', cards: selectedCards });
+                selectedCards = []; updateDiscardBtn();
+            }
+        }
+
+        function sendAction(type) { socket.emit('action', { type: type }); }
+
+        socket.on('update', (state) => {
+            document.getElementById('pot').innerText = state.pot;
+            document.getElementById('house').innerText = state.houseProfit;
+            document.getElementById('blind').innerText = state.currentBlind;
+            document.getElementById('phase').innerText = state.phase;
+            
+            let me = state.players.find(p => p.id === socket.id);
+            if (me) {
+                document.getElementById('chips').innerText = me.chips;
+                let cardsHtml = '';
+                me.cards.forEach((c, i) => cardsHtml += renderCard(c, i, me.status === 'TU_TURNO'));
+                document.getElementById('my-cards').innerHTML = cardsHtml;
+                
+                let board = document.getElementById('board');
+                if (me.status === 'TU_TURNO') {
+                    document.getElementById('actions').style.display = 'block';
+                    board.classList.add('highlight-turn');
+                    document.getElementById('msg-banner').innerText = "¡ES TU TURNO!";
+                    updateDiscardBtn();
+                } else {
+                    document.getElementById('actions').style.display = 'none';
+                    board.classList.remove('highlight-turn');
+                }
+                
+                document.getElementById('start-btn').style.display = (state.phase === 'ESPERANDO' && state.players.length >= 2) ? 'block' : 'none';
+            }
+
+            if(state.phase === 'RESOLUCION') {
+                document.getElementById('dealer-cards').innerHTML = state.dealerCards.map(c => renderCard(c, 0, false)).join('');
+            } else if (state.phase === 'ACCION') {
+                document.getElementById('dealer-cards').innerHTML = '<div class="card hidden"></div>'.repeat(5);
+            } else {
+                document.getElementById('dealer-cards').innerHTML = '';
+            }
+        });
+
+        socket.on('message', (msg) => { 
+            let banner = document.getElementById('msg-banner');
+            if (!document.getElementById('board').classList.contains('highlight-turn')) {
+                banner.innerText = msg; 
+            }
+        });
+    </script>
+</body>
+</html>
